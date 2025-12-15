@@ -18,12 +18,15 @@
         /* ELEMENTOS FLUTUANTES */
         .admin-toggle { position: fixed; bottom: 30px; right: 30px; background: #003cff; color: white; border: none; padding: 15px 25px; border-radius: 50px; cursor: pointer; font-size: 1em; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; z-index: 1000; display: none; }
         .admin-toggle:hover { background: #00009b; transform: scale(1.05); }
-        .user-badge { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 20px; font-size: 0.85em; }
         
+        .user-badge { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 20px; font-size: 0.85em; cursor: pointer; }
+        .user-badge:hover { background: rgba(255,255,255,0.4); }
+
         /* STATUS */
         .status-indicator { position: fixed; top: 20px; right: 20px; padding: 10px 20px; border-radius: 20px; font-size: 0.9em; font-weight: 600; z-index: 1001; display: none; animation: fadeIn 0.3s; }
         .status-indicator.connected { background: #4caf50; color: white; display: block; }
         .status-indicator.loading { background: #2196f3; color: white; display: block; }
+        .status-indicator.error { background: #f44336; color: white; display: block; }
         
         /* MODAL */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; overflow-y: auto; padding: 20px; }
@@ -86,24 +89,22 @@
             margin-top: auto; 
             padding-top: 15px; 
             border-top: 1px solid #f0f0f0;
-            min-height: 45px; /* Garante altura para os botões não pularem o layout */
+            min-height: 45px;
         }
 
-        /* Container dos Botões: Invisível por padrão */
         .card-actions { 
             display: flex; 
             gap: 8px;
-            opacity: 0; /* Invisível */
-            transform: translateX(10px); /* Leve deslocamento para direita */
-            transition: all 0.3s ease; /* Animação suave */
-            pointer-events: none; /* Impede clique quando invisível */
+            opacity: 0; 
+            transform: translateX(10px); 
+            transition: all 0.3s ease; 
+            pointer-events: none; 
         }
         
-        /* REVELAR botões ao passar o mouse no CARD */
         .wiki-card:hover .card-actions {
             opacity: 1;
             transform: translateX(0);
-            pointer-events: auto; /* Reativa o clique */
+            pointer-events: auto;
         }
         
         .card-action-btn { background: #f4f4f4; border: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 0.9em; transition: all 0.2s; display: flex; align-items: center; justify-content: center; color: #666; }
@@ -129,12 +130,10 @@
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #003cff; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* MOBILE: Garante que botões apareçam sempre (sem mouseover) */
         @media (max-width: 768px) { 
             header h1 { font-size: 1.8em; } 
             .wiki-grid { grid-template-columns: 1fr; } 
             .modal-content { padding: 20px; margin: 20px auto; } 
-            
             .card-actions { opacity: 1; transform: translateX(0); pointer-events: auto; }
         }
     </style>
@@ -145,7 +144,7 @@
     <div id="loadingOverlay" class="loading-overlay">
         <div class="loading-spinner">
             <div class="spinner"></div>
-            <p><strong>Salvando artigo...</strong></p>
+            <p><strong>Processando...</strong></p>
         </div>
     </div>
 
@@ -153,7 +152,7 @@
         <div class="container">
             <h1>📚 Wiki - Produtos</h1>
             <p>Base de conhecimento colaborativa</p>
-            <div class="user-badge" id="userBadge">👤 Carregando...</div>
+            <div class="user-badge" id="userBadge" onclick="changeUser()">👤 Entrar</div>
         </div>
     </header>
 
@@ -213,15 +212,14 @@
     </div>
 
     <script>
-        // ⚠️ Verifique a URL do seu Script
+        // --- CONFIGURAÇÃO ---
+        // ⚠️ IMPORTANTE: Coloque aqui a URL do seu Deploy do Google Apps Script
         const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxufEq5lQVglPZRH4mK6gGm0jIqiwd2djGWaojFQvT8sLaxadoxV0KU77sabP5sr572Hw/exec';
-        
-        const SERVER_DETECTED_EMAIL = '<?!= currentUserEmail ?>';
-        const INITIAL_AUTH_STATE = <?!= isUserAuthorized ?>;
         
         let articles = [];
         let currentArticleId = null;
-        let isAuthorized = INITIAL_AUTH_STATE;
+        let currentUserEmail = ''; 
+        let isAuthorized = false;
 
         function formatDate(dateString) {
             if (!dateString) return '';
@@ -231,15 +229,13 @@
         }
 
         async function init() {
-            const badge = document.getElementById('userBadge');
-            if (badge) {
-                badge.textContent = '👤 ' + (SERVER_DETECTED_EMAIL || 'Visitante');
-                if (isAuthorized) badge.textContent += ' ✏️ Editor';
-            }
+            // 1. Tentar pegar o usuário do localStorage
+            checkUserSession();
             
-            updateUIBasedOnAuth();
+            // 2. Carregar artigos
             await loadArticlesFromSheet();
             
+            // 3. Event Listeners
             document.getElementById('searchInput').addEventListener('input', handleSearch);
             document.getElementById('articleForm').addEventListener('submit', handleFormSubmit);
             document.getElementById('addButton').addEventListener('click', openAddModal);
@@ -250,10 +246,51 @@
             });
         }
 
+        function checkUserSession() {
+            const savedEmail = localStorage.getItem('wikiUserEmail');
+            if (savedEmail) {
+                currentUserEmail = savedEmail;
+                isAuthorized = true; // Simula autorização se tiver email
+                updateUIBasedOnAuth();
+            } else {
+                // Solicitar login na primeira vez
+                setTimeout(() => changeUser(), 1000);
+            }
+        }
+
+        function changeUser() {
+            const email = prompt("Digite seu e-mail para editar ou visualizar:", currentUserEmail || "");
+            if (email) {
+                currentUserEmail = email;
+                localStorage.setItem('wikiUserEmail', email);
+                isAuthorized = true;
+                updateUIBasedOnAuth();
+                loadArticlesFromSheet(); // Recarrega para validar permissões se necessário
+            }
+        }
+
+        function updateUIBasedOnAuth() {
+            const badge = document.getElementById('userBadge');
+            const addButton = document.getElementById('addButton');
+            
+            if (currentUserEmail) {
+                badge.textContent = '👤 ' + currentUserEmail;
+                badge.title = "Clique para trocar de usuário";
+                addButton.style.display = 'block';
+            } else {
+                badge.textContent = '👤 Entrar';
+                addButton.style.display = 'none';
+            }
+        }
+
         async function loadArticlesFromSheet() {
             try {
                 updateStatus('loading', '🔄 Carregando...');
-                const response = await fetch(`${GOOGLE_SCRIPT_URL}?v=api&userEmail=${encodeURIComponent(SERVER_DETECTED_EMAIL)}`);
+                
+                // Envia o email na URL para a API saber quem é
+                const url = `${GOOGLE_SCRIPT_URL}?v=api&userEmail=${encodeURIComponent(currentUserEmail)}`;
+                
+                const response = await fetch(url);
                 const result = await response.json();
 
                 if (result.success) {
@@ -264,39 +301,37 @@
                     }));
                 } else {
                      articles = [];
+                     console.warn('API retornou erro:', result.error);
                 }
+                
                 renderGrid();
                 updateStatus('connected', '✅ Pronto');
                 setTimeout(() => document.getElementById('statusIndicator').style.display = 'none', 2000);
 
             } catch (error) {
                 console.error('❌ Erro:', error);
-                updateStatus('connected', '❌ Erro de conexão');
+                updateStatus('error', '❌ Erro de conexão (Verifique CORS)');
             }
         }
 
-        function updateUIBasedOnAuth() {
-            const addButton = document.getElementById('addButton');
-            addButton.style.display = isAuthorized ? 'block' : 'none';
-        }
-
         async function saveArticleToSheet(article, action = 'add') {
-            if (!isAuthorized) { alert('❌ Sem permissão. (Detectado no front)'); return false; }
+            if (!currentUserEmail) { alert('⚠️ Faça login primeiro.'); changeUser(); return false; }
 
             try {
                 showLoading();
                 const payload = {
                     action: action,
-                    userEmail: SERVER_DETECTED_EMAIL, 
+                    userEmail: currentUserEmail, 
                     article: {
                         ...article,
                         tags: Array.isArray(article.tags) ? article.tags.join(', ') : article.tags
                     }
                 };
 
+                // Uso de text/plain para evitar Preflight CORS complexo no Google Apps Script
                 const response = await fetch(GOOGLE_SCRIPT_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
                     body: JSON.stringify(payload)
                 });
 
@@ -304,10 +339,11 @@
 
                 if (result.success) {
                     if (action === 'add') {
-                        article.author = SERVER_DETECTED_EMAIL; 
+                        article.author = currentUserEmail; 
+                        article.id = result.id || article.id; // Usa o ID retornado pelo servidor se houver
                         articles.push(article);
                     } else if (action === 'update') {
-                        const index = articles.findIndex(a => a.id === article.id);
+                        const index = articles.findIndex(a => a.id == article.id);
                         if (index !== -1) articles[index] = { ...articles[index], ...article };
                     }
                     hideLoading();
@@ -323,18 +359,19 @@
         }
 
         async function deleteArticleFromSheet(id) {
-            if (!isAuthorized) { alert('❌ Sem permissão.'); return false; }
+            if (!currentUserEmail) return false;
             try {
                 showLoading();
                 const response = await fetch(GOOGLE_SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'delete', id: id, userEmail: SERVER_DETECTED_EMAIL })
+                    body: JSON.stringify({ action: 'delete', id: id, userEmail: currentUserEmail })
                 });
                 const result = await response.json();
+                hideLoading();
+                
                 if (result.success) {
                     articles = articles.filter(a => a.id != id);
-                    hideLoading();
                     return true;
                 }
                 throw new Error(result.error || 'Erro ao deletar');
@@ -345,6 +382,7 @@
             }
         }
 
+        // --- FUNÇÕES DE UI AUXILIARES (IGUAIS AO ANTERIOR) ---
         function showLoading() { document.getElementById('loadingOverlay').classList.add('active'); }
         function hideLoading() { document.getElementById('loadingOverlay').classList.remove('active'); }
         function updateStatus(status, text) {
@@ -355,25 +393,20 @@
         function renderGrid() {
             const grid = document.getElementById('wikiGrid');
             if (articles.length === 0) {
-                grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div><h3>Nenhum artigo ainda</h3></div>`;
+                grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div><h3>Nenhum artigo encontrado</h3></div>`;
                 return;
             }
 
-            // --- RENDERIZAÇÃO FINAL ---
             grid.innerHTML = articles.map(article => `
                 <div class="wiki-card" data-id="${article.id}">
                     <div class="wiki-card-header">
                         <h3>${article.title}</h3>
                         <div class="wiki-card-icon">${article.icon}</div>
                     </div>
-                    
                     <p>${article.description}</p>
-                    
                     <div>${(Array.isArray(article.tags) ? article.tags : []).map(tag => `<span class="tag">${tag}</span>`).join('')}</div>
-                    
                     <div class="wiki-card-meta">
                         <span>📅 ${formatDate(article.date)}</span>
-                        
                         ${isAuthorized ? `
                             <div class="card-actions">
                                 <button class="card-action-btn edit" data-id="${article.id}">✏️</button>
@@ -384,8 +417,9 @@
                 </div>
             `).join('');
 
+            // Reattach events
             document.querySelectorAll('.wiki-card').forEach(card => {
-                const id = parseInt(card.dataset.id);
+                const id = card.dataset.id; // Mantém como string para evitar problemas de comparação
                 card.addEventListener('click', (e) => { 
                     if (!e.target.closest('.card-action-btn')) showArticle(id); 
                 });
@@ -471,7 +505,7 @@
             saveButton.textContent = '💾 Salvando...';
 
             const article = {
-                id: currentArticleId || Date.now(),
+                id: currentArticleId || Date.now().toString(), // Garante ID único string
                 icon: document.getElementById('articleIcon').value.trim(),
                 title: document.getElementById('articleTitle').value.trim(),
                 description: document.getElementById('articleDescription').value.trim(),
